@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Chess</title>
+    
+    <style>
+        body {
+            font-family: Gabriola;
+            background: linear-gradient(90deg, black, white);
+        }
+        #table {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) rotate(0deg);
+            border: 4px solid black;
+            border-collapse: collapse;
+            padding: 1%;
+            width: fit-content;
+            transition: 1s;
+            transition-timing-function: ease-out;
+        }
+        .grid {
+            border: 2px solid black;
+            --grid-size: min(10vh, 10vw);
+            width: var(--grid-size);
+            height: var(--grid-size);
+            padding: 0%;
+        }
+        .grid.black { color: white; background-color: #333; }
+        .grid.white { color: #333; background-color: white; }
+        .grid div {
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+        div.side {
+            position: relative;
+            grid-row: 1;
+            grid-column: 1;
+            font-weight: bolder;
+            font-size: 1.25rem;
+            top: -10%;
+            left: 0%;
+            padding: 5%;
+            pointer-events: none;
+        }
+        .grid img {
+            position: relative;
+            width: 86%;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            grid-row: 1;
+            grid-column: 1;
+            cursor: pointer;
+        }
+        .grid img.upside-down { transform: translate(-50%, -50%) rotate(180deg); }
+        .grid#hovered div:not(.side) { border: 4px solid orange; }
+        .grid#selected div:not(.side) { border: 4px solid orangered; }
+        .grid#hovered div, .grid#selected div {
+            --prc: 0.9;
+            width: calc(var(--grid-size) * var(--prc));
+            height: calc(var(--grid-size) * var(--prc));
+        }
+        .grid.available { cursor: pointer; }
+        .grid.available.regular, .grid.available.move-only
+        { background-color: #0073d2; }
+        .grid.available.regular-attacking, .grid.available.attack-only
+        { background-color: #d22a00; }
+        .grid.available.special-attack, .grid.available.castling
+        { background-color: #9000d2; }
+        .grid.available.promotion { background-color: #2ad200; }
+        .grid.checkmated { background-color: crimson; }
+        #shadow {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0%;
+            left: 0%;
+            background: radial-gradient(#3a3a3a8e, #000000b6);
+        }
+        #promotion_menu {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 50%;
+            height: 50%;
+            border: 3px solid black;
+            background: radial-gradient(#2ad200d0 30%, #187a00f8);
+            --promotion-entrance-speed: 0.5s;
+            animation-timing-function: ease-out;
+            font-size: 2.5rem;
+            font-weight: bold;
+        }
+        #promotion_menu table {
+            position: relative;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+        #promotion_menu .promotion_button {
+            position: relative;
+            display: grid;
+            text-align: center;
+            border: 3px solid black;
+            background-color: #00000055;
+            margin: 10%;
+            padding: 5%;
+            cursor: pointer;
+            transition: 0.25s;
+        }
+        #promotion_menu .promotion_button:hover { margin: 1%; }
+        #promotion_menu .promotion_button img {
+            grid-row: 1;
+            grid-column: 1;
+            width: 100%;
+            animation: promotion-buttons-entrance var(--promotion-entrance-speed) 1 normal;
+        }
+        #promotion_menu.entering {
+            animation: promotion-menu-entrance var(--promotion-entrance-speed) 1 normal;
+        }
+        #promotion_menu.exiting {
+            animation: promotion-menu-exiting var(--promotion-entrance-speed) 1 normal;
+        }
+        #promotion_menu.entering .promotion_button img {
+            animation: promotion-buttons-entrance var(--promotion-entrance-speed) 1 normal;
+        }
+        #promotion_menu.exiting .promotion_button img {
+            animation: promotion-buttons-exiting var(--promotion-entrance-speed) 1 normal;
+        }
+        @keyframes promotion-menu-entrance {
+            from { width: 0%; height: 0%; font-size: 0rem; }
+            to { width: 50%; height: 50%; font-size: 2.5rem; }
+        }
+        @keyframes promotion-buttons-entrance {
+            from { width: 0%; height: 0%; }
+            to { width: 100%; height: 100%; }
+        }
+        @keyframes promotion-menu-exiting {
+            from { width: 50%; height: 50%; font-size: 2.5rem; }
+            to { width: 0%; height: 0%; font-size: 0rem; }
+        }
+        @keyframes promotion-buttons-exiting {
+            from { width: 100%; height: 100%; }
+            to { width: 0%; height: 0%; }
+        }
+    </style>
+
+</head>
+<body>
+
+    <script>
+        class Piece {
+            constructor(name, colour, x, y) {
+                this.name = name;
+                this.colour = colour;
+                this.x = x;
+                this.y = y;
+                this.hasMoved = false;
+
+                this.SetUpMoves();
+            }
+
+            SetUpMoves() {
+                switch (this.name) {
+                    case 'pawn':
+                        let direction = this.colour === 'w' ? 1 : -1;
+                        this.moves = [
+                            new Move(0, 1 * direction, MoveTypes.MoveOnly),
+                            new Move(1, 1 * direction, MoveTypes.AttackOnly),
+                            new Move(-1, 1 * direction, MoveTypes.AttackOnly)
+                        ];
+                        if (!this.hasMoved) {
+                            this.moves.push(new Move(0, 2 * direction, MoveTypes.MoveOnly, this.moves[0]));
+                        }
+
+                        let leftGrid = GetGrid(this.x + 1, this.y);
+                        if (leftGrid != null
+                        && leftGrid.piece != null
+                        && leftGrid.piece.name === 'pawn'
+                        && leftGrid.piece.colour != this.colour)
+                        { this.moves.push(new Move(1, 1 * direction, MoveTypes.SpecialAttack)); }
+                        
+                        let rightGrid = GetGrid(this.x - 1, this.y);
+                        if (rightGrid != null
+                        && rightGrid.piece != null
+                        && rightGrid.piece.name === 'pawn'
+                        && rightGrid.piece.colour != this.colour)
+                        { this.moves.push(new Move(-1, 1 * direction, MoveTypes.SpecialAttack)); }
+                    break;
+                    
+                    case 'king':
+                        this.moves = [];
+                        for (let i = -1; i <= 1; i++) {
+                            for (let j = -1; j <= 1; j++) {
+                                if (i === j === 0) { continue; }
+                                this.moves.push(new Move(i, j, MoveTypes.Regular));
+                            }
+                        }
+                    break;
+                    
+                    case 'knight':
+                        this.moves = [];
+                        for (let i = -1; i <= 1; i += 2) {
+                            for (let j = -2; j <= 2; j += 4) {
+                                this.moves.push(new Move(i, j, MoveTypes.Regular));
+                                this.moves.push(new Move(j, i, MoveTypes.Regular));
+                            }
+                        }
+                    break;
+                    
+                    case 'rook':
+                    case 'bishop':
+                    case 'queen':
+                        this.moves = [];
+                        if (['rook', 'queen'].includes(this.name)) {
+                            for (let i = 0; i <= 7; i++) {
+                                this.moves.push(new Move(0, i + 1, MoveTypes.Regular, i === 0 ? null : this.moves[i - 1]));
+                            }
+                            for (let i = 0; i <= 7; i++) {
+                                this.moves.push(new Move(0, -i - 1, MoveTypes.Regular, i === 0 ? null : this.moves[i + 7]));
+                            }
+                            for (let i = 0; i <= 7; i++) {
+                                this.moves.push(new Move(i + 1, 0, MoveTypes.Regular, i === 0 ? null : this.moves[i + 15]));
+                            }
+                            for (let i = 0; i <= 7; i++) {
+                                this.moves.push(new Move(-i - 1, 0, MoveTypes.Regular, i === 0 ? null : this.moves[i + 23]));
+                            }
+
+                            if (this.name === 'rook') {
+                                let x = 4;
+                                let y = this.colour === 'w' ? 0 : 7;
+                                let king = GetGrid(x, y).piece;
+                                if (king != null && !king.hasMoved && !this.hasMoved) {
+                                    if (this.x === 0) {
+                                        this.moves.push(new Move(3, 0, MoveTypes.Castling, this.moves[17]));
+                                    }
+                                    else if (this.x === 7) {
+                                        this.moves.push(new Move(-2, 0, MoveTypes.Castling, this.moves[25]));
+                                    }
+                                }
+                            }
+                        }
+                        if (['bishop', 'queen'].includes(this.name)) {
+                            for (let i = 0; i <= 7; i++) {
+                                this.moves.push(new Move(i + 1, i + 1, MoveTypes.Regular, i === 0 ? null : this.moves[i + (this.name === 'bishop' ? -1 : 31)]));
+                            }
+                            for (let i = 0; i <= 7; i++) {
+                                this.moves.push(new Move(i + 1, -i - 1, MoveTypes.Regular, i === 0 ? null : this.moves[i + (this.name === 'bishop' ? 7 : 39)]));
+                            }
+                            for (let i = 0; i <= 7; i++) {
+                                this.moves.push(new Move(-i - 1, i + 1, MoveTypes.Regular, i === 0 ? null : this.moves[i + (this.name === 'bishop' ? 15 : 47)]));
+                            }
+                            for (let i = 0; i <= 7; i++) {
+                                this.moves.push(new Move(-i - 1, -i - 1, MoveTypes.Regular, i === 0 ? null : this.moves[i + (this.name === 'bishop' ? 23 : 55)]));
+                            }
+                        }
+                    break;
+
+                    default:
+                        this.moves = [];
+                        break;
+                }
+            }
+        }
+
+        class Grid {
+            constructor(td, div, piece) {
+                this.td = td;
+                this.div = div;
+                this.piece = piece;
+            }
+        }
+
+        class Move {
+            constructor(x, y, type = MoveTypes.Regular, attachedMove = null) {
+                this.x = x;
+                this.y = y;
+                this.type = type;
+                this.attachedMove = attachedMove;
+            }
+        }
+
+        const MoveTypes = {
+            Regular: 'regular',
+            MoveOnly: 'move-only',
+            AttackOnly: 'attack-only',
+            SpecialAttack: 'special-attack',
+            Castling: 'castling',
+            Promotion: 'promotion'
+        };
+
+        var grids = Array.from(Array(8), () => new Array(8).fill(null));
+        var selectedGrid = null;
+        var hoveredGrid = null;
+        var currentTurn = 'w';
+        var rotatingBoard = true;
+
+        SetUpTable();
+        SetUpPieces();
+        SetUpKeyboard();
+        UpdateTurn();
+        
+        function SetUpTable() {
+            let table = document.createElement('table');
+            document.body.append(table);
+            table.id = 'table';
+
+            let letters = 'ABCDEFGH';
+
+            for (let i = 0; i < 8; i++) {
+                let tr = document.createElement('tr');
+                table.append(tr);
+                for (let j = 0; j < 8; j++) {
+                    let td = document.createElement('td');
+                    tr.append(td);
+
+                    let div = document.createElement('div');
+                    td.append(div);
+
+                    td.className = 'grid ' + ((i + j) % 2 == 0 ? 'black' : 'white');
+                    
+                    if (i === 7 || j === 0) {
+                        let textDiv = document.createElement('div');
+                        div.append(textDiv);
+
+                        textDiv.className = 'side';
+
+                        div.style.setProperty('display', 'grid');
+                        
+                        textDiv.innerText = j === 0 ?
+                            (i === 7 ? '1 ' : '') + letters[7 - i] : j + 1;
+                    }
+
+                    div.ondragover = (e) => {
+                        if (!td.className.includes('available')) { return; }
+
+                        e.stopPropagation();
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                    };
+
+                    div.ondrop = (e) => {
+                        KillPiece(j, 7 - i, selectedGrid.piece);
+
+                        if (selectedGrid.piece.name === 'rook' && grids[j][7 - i].td.className.includes(' castling'))
+                        { Castle(selectedGrid.piece.x, selectedGrid.piece.y, selectedGrid.piece); }
+                        
+                        if (selectedGrid.piece.name === 'pawn' && grids[j][7 - i].td.className.includes(' promotion'))
+                        {  ShowPromotionMenu(j, 7 - i, selectedGrid.piece.colour); }
+
+                        let textDiv = Array.from(div.children).find((child) => child.innerText != null);
+                        if (textDiv != null) { Array.from(div.children).find((child) => child.innerText != null).remove(); }
+
+                        MovePieceTo(selectedGrid, j, 7 - i);
+                        div.append(selectedGrid.div.children[0]);
+                        if (textDiv != null) { div.append(textDiv); }
+                        Deselect();
+                    }
+
+                    td.onmouseenter = (e) => Hover(j, 7 - i);
+                    td.onmousedown = (e) => { if (e.buttons === 1) { Select(j, 7 - i); } };
+
+                    grids[j][7 - i] = new Grid(td, div, null);
+                }
+            }
+            table.onmousedown = (e) => { if (e.buttons === 2) { Deselect(); } };
+        }
+
+        function InsertPiece(name, colour, x, y) {
+            let textDiv =  Array.from(grids[x][y].div.children).find((child) => child.innerText != null);
+            if (textDiv != null) {  Array.from(grids[x][y].div.children).find((child) => child.innerText != null).remove(); }
+
+            let piece = new Piece(name, colour, x, y);
+            grids[x][y].piece = piece;
+
+            let img = document.createElement('img');
+            img.className = colour === 'w' ? 'white_piece' : 'black_piece';
+
+            img.src = 'Images/' + colour + '_' + name + '.png';
+
+            grids[x][y].div.append(img);
+            if (textDiv != null) { grids[x][y].div.append(textDiv); }
+        }
+
+        function SetUpPieces() {
+            for (let i = 0; i < 2; i++) {
+                let colour = i == 0 ? 'b' : 'w';
+                let y = i == 0 ? 7 : 0;
+
+                // Pawns:
+                let yp = i == 0 ? 6 : 1;
+                for (let j = 0; j < 8; j++) {
+                    InsertPiece('pawn', colour, j, yp);
+                }
+
+                // Kings & Queens:
+                InsertPiece('queen', colour, 3, y);
+                InsertPiece('king', colour, 4, y);
+
+                // Bishops & Knights & Rooks:
+                for (let j = 0; j < 2; j++) {
+                    let xb = j == 0 ? 2 : 5;
+                    let xk = j == 0 ? 1 : 6;
+                    let xr = j == 0 ? 0 : 7;
+                    InsertPiece('bishop', colour, xb, y);
+                    InsertPiece('knight', colour, xk, y);
+                    InsertPiece('rook', colour, xr, y);
+                }
+            }
+            
+            if (!rotatingBoard) { return; }
+            Array.from(document.getElementsByClassName('black_piece')).forEach((piece) =>
+            { piece.className += ' upside-down'; });
+        }
+
+        function Hover(x, y) {
+            try { document.getElementById('hovered').id = ''; } catch { }
+            if (grids[x][y].td.id === 'selected') { return; }
+            grids[x][y].td.id = 'hovered';
+
+            hoveredGrid = grids[x][y];
+            hoveredGrid.x = x;
+            hoveredGrid.y = y;
+        }
+
+        function Select(x, y) {
+            if (selectedGrid != null && grids[x][y].td.className.includes('available')) {
+                KillPiece(x, y, selectedGrid.piece);
+
+                if (selectedGrid.piece.name === 'rook' && grids[x][y].td.className.includes(' castling'))
+                { Castle(selectedGrid.piece.x, selectedGrid.piece.y, selectedGrid.piece); }  
+                
+                if (selectedGrid.piece.name === 'pawn' && grids[x][y].td.className.includes(' promotion'))
+                { ShowPromotionMenu(x, y, selectedGrid.piece.colour); }
+
+                MovePieceTo(selectedGrid, x, y, false);
+                Deselect();
+                return;
+            }
+
+            Deselect();
+
+            selectedGrid = grids[x][y];
+            selectedGrid.x = x;
+            selectedGrid.y = y;
+            selectedGrid.td.id = 'selected';
+
+            if (selectedGrid.piece == null) { return; }
+            if (currentTurn != selectedGrid.piece.colour) { return; }
+            
+            selectedGrid.piece.SetUpMoves();
+            selectedGrid.piece.moves.forEach((move) => HandleMove(move, x, y, selectedGrid.piece));
+        }
+
+        function Deselect() {
+            selectedGrid = null;
+            try { document.getElementById('selected').id = ''; } catch { } 
+            
+            Array.from(document.getElementsByClassName('available')).forEach((available) => {
+                available.className = available.className.split(' available')[0]
+                    + (available.className.includes(' checkmated') ? ' checkmated' : '');
+            });
+        }
+
+        function GetGrid(x, y) { try { return grids[x][y]; } catch { return null; } }
+
+        function MovePieceTo(grid, x, y, dragging = true) {
+            if (!dragging) {
+                let textDiv = Array.from(grids[x][y].div.children).find((child) => child.innerText != null);
+                if (textDiv != null) { Array.from(grids[x][y].div.children).find((child) => child.innerText != null).remove(); }
+
+                let img = document.createElement('img');
+                img.src = Array.from(grid.div.children).find((child) => child.src != null).src;
+                img.className = Array.from(grid.div.children).find((child) => child.src != null).className;
+                Array.from(grid.div.children).find((child) => child.src != null).remove();
+
+                grids[x][y].div.append(img);
+                if (textDiv != null) { grids[x][y].div.append(textDiv); }
+            }
+
+            let oldX = grid.piece.x;
+            let oldY = grid.piece.y;
+            grid.piece.hasMoved = true;
+            grid.piece.SetUpMoves();
+
+            grids[x][y].piece = grid.piece;
+
+            grids[x][y].piece.x = x;
+            grids[x][y].piece.y = y;
+
+            grids[oldX][oldY].piece = null;
+            EndTurn(x, y);
+        }
+
+        function HandleMove(move, x, y, piece, using = true) {
+            let grid = GetGrid(x + move.x, y + move.y);
+            if (grid == null) { return; }
+
+            let moveType = move.type;
+            if (move.attachedMove != null && !HandleMove(move.attachedMove, x, y, piece)) { return; }
+            switch (move.type) {
+                case MoveTypes.Regular:
+                    if (grid.piece != null && grid.piece.colour != grids[x][y].piece.colour)
+                    { moveType = MoveTypes.AttackOnly; }
+                    else if (grid.piece != null) { return; }
+                break;
+
+                case MoveTypes.MoveOnly:
+                    if (grid.piece != null) { return; }
+                    if (piece.name === 'pawn' &&
+                        (piece.colour === 'w' && piece.y + move.y === 7)
+                     || (piece.colour === 'b' && piece.y + move.y === 0))
+                    { moveType = MoveTypes.Promotion; }
+                break;
+
+                case MoveTypes.AttackOnly:
+                    if (grid.piece === null) { return; }
+                    if (grid.piece.colour === grids[x][y].piece.colour) { return; }
+                    if (piece.name === 'pawn' &&
+                        (piece.colour === 'w' && piece.y + move.y === 7)
+                     || (piece.colour === 'b' && piece.y + move.y === 0))
+                    { moveType = MoveTypes.Promotion; }
+                break;
+
+                case MoveTypes.Castling:
+                case MoveTypes.SpecialAttack:
+                    if (grid.piece != null) { return; }
+                    if (piece.name === 'pawn' &&
+                        (piece.colour === 'w' && piece.y + move.y === 7)
+                     || (piece.colour === 'b' && piece.y + move.y === 0))
+                    { moveType = MoveTypes.Promotion; }
+                break;
+
+                default:
+                    break;
+            }
+            if (using) { grid.td.className += ' available ' + moveType; }
+            return moveType === move.type;
+        }
+
+        function KillPiece(x, y, killerPiece) {
+            let grid = GetGrid(x, y);
+            if (grid === null) { return; }
+
+            if ((grid.td.className.includes(' special-attack')
+             || (grid.td.className.includes(' promotion') && grid.piece === null
+                && x != killerPiece.x))
+             && killerPiece.name === 'pawn') {
+                KillPiece(x, y + (killerPiece.colour === 'w' ? -1 : 1), killerPiece);
+            }
+
+            IlluminatePiece(x, y);
+        }
+
+        function IlluminatePiece(x, y) {
+            let grid = GetGrid(x, y);
+
+            if (grid === null) { return; }
+            if (grid.piece === null) { return; }
+
+            grid.piece = null;
+            Array.from(grid.div.children).find((child) => child.src != null).remove();
+        }
+
+        function Castle(x, y, rook) {
+            let newX = x === 0 ? 2 : 6;
+            MovePieceTo(grids[4][y], newX, y, false);
+            EndTurn(x, y);
+        }
+
+        function ShowPromotionMenu(x, y, colour) {
+            let shadow = document.createElement('div');
+            document.body.append(shadow);
+            shadow.id = 'shadow';
+
+            let promotionMenu = document.createElement('div');
+            shadow.append(promotionMenu);
+            promotionMenu.id = 'promotion_menu';
+            promotionMenu.className = 'entering';
+
+            let container = document.createElement('table');
+            promotionMenu.append(container);
+            container.id = 'promotion_buttons_container';
+            
+            let tr = document.createElement('tr');
+            container.append(tr);
+
+            const promotionCases = [ 'Queen', 'Rook', 'Bishop', 'Knight' ];
+
+            for (let i = 0; i < 4; i++) {
+                let td = document.createElement('td');
+                tr.append(td);
+                
+                let button = document.createElement('div');
+                td.append(button);
+                button.className = 'promotion_button';
+                button.innerText = promotionCases[i];
+                button.id = 'promotion_button_' + promotionCases[i].toLowerCase();
+                
+                let img = document.createElement('img');
+                button.append(img);
+                img.src = 'Images/' + colour + '_' + promotionCases[i].toLowerCase() + '.png';
+
+                button.onmousedown = (e) => {
+                    if (e.buttons === 1) {
+                        promotionMenu.className = 'exiting';
+                        setTimeout(() => shadow.remove(), 500);
+
+                        IlluminatePiece(x, y);
+                        InsertPiece(promotionCases[i].toLowerCase(), colour, x, y);
+
+                        if (rotatingBoard && colour === 'b')
+                        { Array.from(grids[x][y].div.children).find((child) => child.src != null).className += ' upside-down'; }
+                        Array.from(grids[x][y].div.children).find((child) => child.src != null).style.opacity = '0.5';
+                    }
+                };
+            }
+        }
+
+        function SetUpKeyboard() {
+            document.onkeydown = (e) => {
+                switch (e.code) {
+                    case 'Space':
+                        if (hoveredGrid === null) { return; }
+                        Select(hoveredGrid.x, hoveredGrid.y);
+                    break;
+
+                    case 'Escape': Deselect(); break;
+
+                    case 'ArrowUp':
+                    case 'ArrowLeft':
+                    case 'ArrowDown':
+                    case 'ArrowRight':
+                        if (document.getElementById('shadow') != null) { return; }
+
+                        let x = e.code === 'ArrowLeft' ? -1 : e.code === 'ArrowRight' ? +1 : 0;
+                        let y = e.code === 'ArrowUp' ? +1 : e.code === 'ArrowDown' ? -1 : 0;
+
+                        let newX = hoveredGrid.x + x;
+                        let newY = hoveredGrid.y + y;
+
+                        if (newX < 0) { newX = 7; }
+                        if (newY < 0) { newY = 7; }
+
+                        Hover(newX % 8, newY % 8);
+                    break;
+                    
+                    case 'KeyQ':
+                    case 'KeyR':
+                    case 'KeyK':
+                    case 'KeyB':
+                        if (document.getElementById('shadow') === null) { return; }
+
+                        document.getElementById('promotion_menu').className = 'exiting';
+                        setTimeout(() => shadow.remove(), 500);
+
+                        let oldX = hoveredGrid.x;
+                        let oldY = hoveredGrid.y;
+                        let colour = grids[oldX][oldY].piece.colour;
+                        IlluminatePiece(oldX, oldY);
+                        
+                        let promotionCase = e.code === 'KeyQ' ? 'queen'
+                                          : e.code === 'KeyR' ? 'rook'
+                                          : e.code === 'KeyK' ? 'knight'
+                                          : 'bishop';
+                        
+                        InsertPiece(promotionCase, colour, oldX, oldY);
+                    break;
+                }
+            };
+        }
+
+        function EndTurn(x, y) {
+            currentTurn = currentTurn === 'w' ? 'b' : 'w';
+            CheckmateCheckingAll();
+            UpdateTurn();
+        }
+
+        function UpdateTurn() {
+            if (rotatingBoard) {
+                let table = document.getElementById('table');
+                table.style.transform =
+                    'translate(-50%, -50%) rotate(' + (currentTurn === 'w' ? 0 : 180) + 'deg)';
+            }
+            
+            Array.from(document.getElementsByClassName((currentTurn === 'b' ? 'white' : 'black') + '_piece')).forEach((piece) =>
+            { piece.style.opacity = '0.5'; });
+            Array.from(document.getElementsByClassName((currentTurn === 'w' ? 'white' : 'black') + '_piece')).forEach((piece) =>
+            { piece.style.opacity = '1'; });
+        }
+
+        function CheckmateChecking(x, y) {
+            let piece = grids[x][y].piece;
+            piece.moves.forEach((move) => {
+                let grid = GetGrid(x + move.x, y + move.y);
+
+                if (grid == null || grid.piece == null) { return; }
+                if (grid.piece.name !== 'king') { return; }
+                if (grid.piece.colour === grids[x][y].piece.colour) { return; }
+                if (move.attachedMove != null && !HandleMove(move.attachedMove, x, y, piece, false)) { return; }
+                
+                grid.td.className += ' checkmated';
+            });
+        }
+
+        function CheckmateCheckingAll() {
+            Array.from(document.getElementsByClassName('checkmated')).forEach((lastCheckmated) =>
+            { lastCheckmated.className = lastCheckmated.className.replace(' checkmated', ''); });
+
+            for (let i = 0; i < 8; i++) {
+                for (let j = 0; j < 8; j++) {
+                    if (GetGrid(i, j).piece == null) { continue; }
+                    CheckmateChecking(i, j);
+                }
+            }
+        }
+
+    </script>
+
+</body>
+</html>
